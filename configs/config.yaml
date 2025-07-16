@@ -5,3 +5,10 @@ seed: 1
 torch_deterministic: true
 cuda: true # Set to false to disable cuda
 total_timesteps: 2_000_000
+device: null 
+
+defaults:
+ - agent: falsification # Default agent config
+ - env: key_corridor    # Default environment config
+ - training: default    # Default training config
+ - _self_               # Include the keys from this file itself

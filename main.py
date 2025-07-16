@@ -15,7 +15,8 @@ def main(cfg: DictConfig):
     torch.backends.cudnn.deterministic = cfg.torch_deterministic
     
     device = torch.device("cuda" if torch.cuda.is_available() and cfg.cuda else "cpu")
-    cfg.device = device
+    # Store the device as a string in the config, not the object itself.
+    cfg.device = str(device)
 
     # Initialize and run the trainer
     trainer = Trainer(cfg)

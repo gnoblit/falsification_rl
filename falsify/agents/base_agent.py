@@ -10,7 +10,8 @@ class PPOAgent:
     """Base PPO agent, now handling its own update logic."""
     def __init__(self, obs_shape, action_space, config):
         self.args = config
-        self.device = config.device
+        # Create the torch.device object from the string in the config
+        self.device = torch.device(config.device)
         
         self.feature_extractor = MiniGridCNN(obs_shape).to(self.device)
         self.policy_value_net = PolicyValueNet(self.feature_extractor.feature_size, action_space).to(self.device)

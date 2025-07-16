@@ -1,4 +1,3 @@
-# falsify/training/trainer.py
 import time
 import numpy as np
 import torch
@@ -30,8 +29,9 @@ class Trainer:
                 flat_dict[k] = v
         self.writer.add_text("hyperparameters", "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in flat_dict.items()])))
 
-        self.device = torch.device("cuda" if torch.cuda.is_available() and self.args.cuda else "cpu")
-        self.args.device = self.device
+        # Create the torch.device object from the string in the config.
+        # self.args.device remains a string ("cuda" or "cpu").
+        self.device = torch.device(self.args.device)
         
         self.envs = SyncVectorEnv([make_env(self.args.env.env_id, self.args.seed + i) for i in range(self.args.env.num_envs)])
         
@@ -40,6 +40,7 @@ class Trainer:
 
         agent_map = {"ppo": PPOAgent, "curiosity": CuriosityAgent, "falsification": FalsificationAgent}
         agent_class = agent_map[self.args.agent.agent]
+        # The agent will create its own device object from the config string
         self.agent = agent_class(obs_shape, action_space, self.args).to(self.device)
         self.rollouts = RolloutStorage(self.args.training.num_steps, self.args.env.num_envs, obs_shape, action_space, self.device)
 

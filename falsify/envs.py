@@ -1,5 +1,6 @@
 import torch
 import gymnasium as gym
+import minigrid  
 
 class MiniGridProcessor(gym.ObservationWrapper):
     def __init__(self, env):
