@@ -1,0 +1,7 @@
+agent: "curiosity"
+intrinsic_coef: 0.01
+intrinsic_clip_min: -1
+intrinsic_clip_max: 1
+
+theory_model:
+  hidden_size: 256

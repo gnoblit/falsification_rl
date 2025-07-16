@@ -1,0 +1,17 @@
+agent: "falsification"
+intrinsic_coef: 0.01
+falsify_horizon: 15
+falsify_update_freq: 4
+intrinsic_clip_min: -1
+intrinsic_clip_max: 1
+
+theory_model:
+  hidden_size: 256
+
+falsifier_model:
+  hidden_size: 256
+
+theory_loss_coef: 0.5
+falsifier_loss_coef: 1.0
+
+    

@@ -1,0 +1,7 @@
+# --- Global Settings ---
+# These settings are top-level and not part of any subgroup.
+exp_name: "Falsify_Test"
+seed: 1
+torch_deterministic: true
+cuda: true # Set to false to disable cuda
+total_timesteps: 2_000_000
