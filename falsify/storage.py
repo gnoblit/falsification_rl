@@ -1,6 +1,6 @@
 # falsify/storage.py
 import torch
-from falsify.common.data_structures import SequenceBatch
+from common.data_structures import SequenceBatch
 
 class RolloutStorage:
     def __init__(self, num_steps, num_envs, obs_shape, action_space, device):

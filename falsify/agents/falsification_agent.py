@@ -4,7 +4,7 @@ import numpy as np
 
 from .base_agent import PPOAgent
 from falsify.components import TheoryModule, FalsifierModule
-from falsify.common.data_structures import FalsifierBatch
+from common.data_structures import FalsifierBatch
 
 class FalsificationAgent(PPOAgent):
     def __init__(self, obs_shape, action_space, config):

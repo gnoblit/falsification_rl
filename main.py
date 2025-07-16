@@ -6,7 +6,7 @@ from omegaconf import DictConfig
 
 from falsify.training.trainer import Trainer
 
-@hydra.main(version_base=None, config_path="../configs", config_name="config")
+@hydra.main(version_base=None, config_path="configs", config_name="config")
 def main(cfg: DictConfig):
     # Setup seeds and device
     random.seed(cfg.seed)

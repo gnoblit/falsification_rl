@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 from falsify.models import TheoryModel, FalsifierModel
-from falsify.common.data_structures import SequenceBatch
 
 class TheoryModule(nn.Module):
     """A component for the theory model and its loss."""
