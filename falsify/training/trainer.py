@@ -1,11 +1,12 @@
 import time
 import numpy as np
 import torch
-from gymnasium.vector import SyncVectorEnv
+from gymnasium.vector import AsyncVectorEnv
 from torch.utils.tensorboard import SummaryWriter
 from collections import deque
 from tqdm import tqdm
 from omegaconf import DictConfig, OmegaConf
+from torch.cuda.amp import GradScaler, autocast
 
 from falsify.storage import RolloutStorage
 from falsify.agents import PPOAgent, CuriosityAgent, FalsificationAgent
@@ -17,9 +18,7 @@ class Trainer:
         self.run_name = f"{self.args.env.env_id}__{self.args.agent.agent}__{self.args.exp_name}__{self.args.seed}__{int(time.time())}"
         self.writer = SummaryWriter(f"runs/{self.run_name}")
         
-        # Log hyperparameters by flattening the config
         flat_config = OmegaConf.to_container(self.args, resolve=True, throw_on_missing=True)
-        # A simple flattening for logging
         flat_dict = {}
         for k, v in flat_config.items():
             if isinstance(v, dict):
@@ -29,20 +28,18 @@ class Trainer:
                 flat_dict[k] = v
         self.writer.add_text("hyperparameters", "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in flat_dict.items()])))
 
-        # Create the torch.device object from the string in the config.
-        # self.args.device remains a string ("cuda" or "cpu").
         self.device = torch.device(self.args.device)
         
-        self.envs = SyncVectorEnv([make_env(self.args.env.env_id, self.args.seed + i) for i in range(self.args.env.num_envs)])
+        self.envs = AsyncVectorEnv([make_env(self.args.env.env_id, self.args.seed + i) for i in range(self.args.env.num_envs)])
         
         obs_shape = self.envs.single_observation_space.shape
         action_space = self.envs.single_action_space
 
         agent_map = {"ppo": PPOAgent, "curiosity": CuriosityAgent, "falsification": FalsificationAgent}
         agent_class = agent_map[self.args.agent.agent]
-        # The agent will create its own device object from the config string
         self.agent = agent_class(obs_shape, action_space, self.args).to(self.device)
         self.rollouts = RolloutStorage(self.args.training.num_steps, self.args.env.num_envs, obs_shape, action_space, self.device)
+        self.scaler = GradScaler(enabled=self.args.cuda)
 
     def run(self):
         ep_info_buffer = deque(maxlen=self.args.training.ep_info_buffer_size)
@@ -59,16 +56,18 @@ class Trainer:
             self.agent.policy_value_net.eval()
             
             for step in range(self.args.training.num_steps):
+                # --- OPTIMIZATION: Use autocast for inference during data collection ---
                 with torch.no_grad():
-                    action, logprob, _, value = self.agent.get_action_and_value(self.rollouts.obs[step])
+                    with autocast(enabled=self.args.cuda):
+                        action, logprob, _, value = self.agent.get_action_and_value(self.rollouts.obs[step])
                 
                 next_obs, reward, terminated, truncated, infos = self.envs.step(action.cpu().numpy())
                 done = np.logical_or(terminated, truncated)
                 
                 self.rollouts.insert(
                     torch.Tensor(next_obs).to(self.device), 
-                    action, 
-                    logprob, 
+                    action.view(-1, 1), 
+                    logprob.view(-1, 1), 
                     value, 
                     torch.tensor(reward).float().view(-1, 1).to(self.device), 
                     torch.tensor(1.0 - done).float().view(-1, 1).to(self.device),
@@ -76,13 +75,15 @@ class Trainer:
                 )
 
                 if "final_info" in infos:
-                    for info in infos["final_info"]:
-                        if info and "episode" in info:
-                            ep_info_buffer.append(info["episode"])
+                    for final_info in infos.get("final_info", []):
+                        if final_info and "episode" in final_info:
+                            ep_info_buffer.append(final_info["episode"])
             
-            intrinsic_rewards = self.agent.compute_intrinsic_reward(self.rollouts)
+            # --- OPTIMIZATION: Use autocast for intrinsic reward calculation ---
+            with autocast(enabled=self.args.cuda):
+                intrinsic_rewards = self.agent.compute_intrinsic_reward(self.rollouts)
+
             if "intrinsic_coef" in self.args.agent:
-                # Normalize the rewards for the batch
                 batch_mean = intrinsic_rewards.mean()
                 batch_std = intrinsic_rewards.std()
                 normalized_rewards = (intrinsic_rewards - batch_mean) / (batch_std + 1e-8)
@@ -97,12 +98,14 @@ class Trainer:
                 self.writer.add_scalar("charts/avg_intrinsic_reward", clipped_intrinsic.mean().item(), global_step_base)
             
             self.agent.train()
+            # --- OPTIMIZATION: Use autocast for final value prediction for GAE ---
             with torch.no_grad():
-                next_value = self.agent.get_value(self.rollouts.obs[-1])
+                with autocast(enabled=self.args.cuda):
+                    next_value = self.agent.get_value(self.rollouts.obs[-1])
             
             self.rollouts.compute_returns(next_value, self.args.training.gamma, self.args.training.gae_lambda)
 
-            loss_dict = self.agent.update(self.rollouts)
+            loss_dict = self.agent.update(self.rollouts, self.scaler)
             self.log_losses(loss_dict, global_step_base)
 
             self.rollouts.after_update()

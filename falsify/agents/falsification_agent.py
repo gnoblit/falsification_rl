@@ -23,6 +23,10 @@ class FalsificationAgent(PPOAgent):
         self.policy_optimizer = optim.Adam(self.policy_parameters(), lr=self.args.training.lr, eps=self.args.training.adam_eps)
         self.aux_optimizer = optim.Adam(self.aux_parameters(), lr=self.args.training.aux_lr, eps=self.args.training.adam_eps)
 
+    def train(self):
+        super().train()
+        self.falsifier_module.train()
+
     def compute_intrinsic_reward(self, rollouts):
         return self.falsifier_module.compute_intrinsic_reward(rollouts)
 
@@ -113,14 +117,14 @@ class FalsificationAgent(PPOAgent):
                          
         return total_aux_loss, {**theory_metrics, **falsifier_metrics}
 
-    def update(self, rollouts):
+    def update(self, rollouts, scaler): # Add scaler here
         self.update_counter += 1
         if self.update_counter % self.args.agent.falsify_update_freq == 0:
             self._prepare_falsifier_targets(rollouts)
         else:
             self.falsifier_data_cache = None
             
-        return super().update(rollouts)
-
+        return super().update(rollouts, scaler) # Pass scaler to parent
+    
     def aux_parameters(self):
         return list(self.falsifier_module.parameters())

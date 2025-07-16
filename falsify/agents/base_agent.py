@@ -1,4 +1,5 @@
 import torch
+from torch.cuda.amp import autocast
 import torch.nn as nn
 import torch.optim as optim
 from torch.distributions.categorical import Categorical
@@ -26,6 +27,11 @@ class PPOAgent:
         self.device = device
         return self
 
+    def train(self):
+        """Sets the agent's models to training mode."""
+        self.feature_extractor.train()
+        self.policy_value_net.train()
+
     def get_value(self, x):
         features = self.feature_extractor(x)
         return self.policy_value_net(features)[1]
@@ -51,7 +57,7 @@ class PPOAgent:
         # Child classes must implement this to return parameters for the auxiliary optimizer.
         return []
 
-    def update(self, rollouts):
+    def update(self, rollouts, scaler):
         if self.policy_optimizer is None:
             raise NotImplementedError("Optimizers not initialized. Please create them in the agent's __init__ method.")
 
@@ -73,34 +79,39 @@ class PPOAgent:
                 end = start + self.args.training.minibatch_size
                 mb_inds = b_inds[start:end]
                 
-                # --- PPO Policy and Value Update ---
-                _, newlogprob, entropy, newvalue = self.get_action_and_value(
-                    b_obs[mb_inds], b_actions.long()[mb_inds].squeeze(-1)
-                )
+                # Use autocast for the forward and loss computation passes
+                with autocast(enabled=self.args.cuda):
+                    # --- PPO Policy and Value Update ---
+                    _, newlogprob, entropy, newvalue = self.get_action_and_value(
+                        b_obs[mb_inds], b_actions.long()[mb_inds].squeeze(-1)
+                    )
 
-                logratio = newlogprob - b_logprobs[mb_inds]
-                ratio = logratio.exp()
-                with torch.no_grad():
-                    approx_kl = ((ratio - 1) - logratio).mean().item()
+                    logratio = newlogprob - b_logprobs[mb_inds]
+                    ratio = logratio.exp()
+                    with torch.no_grad():
+                        approx_kl = ((ratio - 1) - logratio).mean().item()
 
-                pg_loss1 = -b_advantages[mb_inds] * ratio
-                pg_loss2 = -b_advantages[mb_inds] * torch.clamp(ratio, 1 - self.args.training.clip_coef, 1 + self.args.training.clip_coef)
-                pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+                    pg_loss1 = -b_advantages[mb_inds] * ratio
+                    pg_loss2 = -b_advantages[mb_inds] * torch.clamp(ratio, 1 - self.args.training.clip_coef, 1 + self.args.training.clip_coef)
+                    pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
-                v_loss = 0.5 * ((newvalue.view(-1) - b_returns[mb_inds]) ** 2).mean()
-                entropy_loss = entropy.mean()
+                    v_loss = 0.5 * ((newvalue.view(-1) - b_returns[mb_inds]) ** 2).mean()
+                    entropy_loss = entropy.mean()
 
-                ppo_loss = pg_loss - self.args.training.ent_coef * entropy_loss + v_loss * self.args.training.vf_coef
+                    ppo_loss = pg_loss - self.args.training.ent_coef * entropy_loss + v_loss * self.args.training.vf_coef
 
                 self.policy_optimizer.zero_grad()
-                ppo_loss.backward()
+                scaler.scale(ppo_loss).backward()
+                scaler.unscale_(self.policy_optimizer) # Unscale before clipping
                 torch.nn.utils.clip_grad_norm_(self.policy_parameters(), self.args.training.max_grad_norm)
-                self.policy_optimizer.step()
+                scaler.step(self.policy_optimizer)
+                scaler.update()
 
                 # --- Auxiliary Model Update ---
-                # Only update aux models if an aux optimizer is defined
                 if self.aux_optimizer:
-                    aux_loss, aux_metrics = self.compute_auxiliary_loss(b_obs[mb_inds], rollouts, mb_inds)
+                    with autocast(enabled=self.args.cuda):
+                        aux_loss, aux_metrics = self.compute_auxiliary_loss(b_obs[mb_inds], rollouts, mb_inds)
+                    
                     if aux_metrics:
                         for k, v in aux_metrics.items():
                             if k not in all_aux_metrics:
@@ -108,9 +119,11 @@ class PPOAgent:
                             all_aux_metrics[k].append(v)
 
                     self.aux_optimizer.zero_grad()
-                    aux_loss.backward()
+                    scaler.scale(aux_loss).backward()
+                    scaler.unscale_(self.aux_optimizer)
                     torch.nn.utils.clip_grad_norm_(self.aux_parameters(), self.args.training.max_grad_norm)
-                    self.aux_optimizer.step()
+                    scaler.step(self.aux_optimizer)
+                    scaler.update()
 
                 pg_losses.append(pg_loss.item())
                 v_losses.append(v_loss.item())

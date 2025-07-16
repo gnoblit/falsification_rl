@@ -15,6 +15,10 @@ class CuriosityAgent(PPOAgent):
         self.policy_optimizer = optim.Adam(self.policy_parameters(), lr=self.args.training.lr, eps=self.args.training.adam_eps)
         self.aux_optimizer = optim.Adam(self.aux_parameters(), lr=self.args.training.aux_lr, eps=self.args.training.adam_eps)
 
+    def train(self):
+        super().train()
+        self.theory_module.train()
+
     def compute_intrinsic_reward(self, rollouts):
         self.feature_extractor.eval()
         self.theory_module.model.eval()
