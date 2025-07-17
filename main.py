@@ -18,6 +18,9 @@ def main(cfg: DictConfig):
     # Store the device as a string in the config, not the object itself.
     cfg.device = str(device)
 
+    # Print the device being used
+    print(f"--- Running on device: {device} ---")
+
     # Initialize and run the trainer
     trainer = Trainer(cfg)
     trainer.run()

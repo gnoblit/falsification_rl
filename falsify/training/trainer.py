@@ -6,7 +6,7 @@ from torch.utils.tensorboard import SummaryWriter
 from collections import deque
 from tqdm import tqdm
 from omegaconf import DictConfig, OmegaConf
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 
 from falsify.storage import RolloutStorage
 from falsify.agents import PPOAgent, CuriosityAgent, FalsificationAgent
@@ -39,7 +39,9 @@ class Trainer:
         agent_class = agent_map[self.args.agent.agent]
         self.agent = agent_class(obs_shape, action_space, self.args).to(self.device)
         self.rollouts = RolloutStorage(self.args.training.num_steps, self.args.env.num_envs, obs_shape, action_space, self.device)
-        self.scaler = GradScaler(enabled=self.args.cuda)
+        
+        # --- FIX: Use new GradScaler API ---
+        self.scaler = GradScaler(device=self.args.device, enabled=self.args.cuda)
 
     def run(self):
         ep_info_buffer = deque(maxlen=self.args.training.ep_info_buffer_size)
@@ -56,9 +58,8 @@ class Trainer:
             self.agent.policy_value_net.eval()
             
             for step in range(self.args.training.num_steps):
-                # --- OPTIMIZATION: Use autocast for inference during data collection ---
                 with torch.no_grad():
-                    with autocast(enabled=self.args.cuda):
+                    with autocast(device_type=self.args.device, enabled=self.args.cuda):
                         action, logprob, _, value = self.agent.get_action_and_value(self.rollouts.obs[step])
                 
                 next_obs, reward, terminated, truncated, infos = self.envs.step(action.cpu().numpy())
@@ -79,8 +80,7 @@ class Trainer:
                         if final_info and "episode" in final_info:
                             ep_info_buffer.append(final_info["episode"])
             
-            # --- OPTIMIZATION: Use autocast for intrinsic reward calculation ---
-            with autocast(enabled=self.args.cuda):
+            with autocast(device_type=self.args.device, enabled=self.args.cuda):
                 intrinsic_rewards = self.agent.compute_intrinsic_reward(self.rollouts)
 
             if "intrinsic_coef" in self.args.agent:
@@ -98,9 +98,8 @@ class Trainer:
                 self.writer.add_scalar("charts/avg_intrinsic_reward", clipped_intrinsic.mean().item(), global_step_base)
             
             self.agent.train()
-            # --- OPTIMIZATION: Use autocast for final value prediction for GAE ---
             with torch.no_grad():
-                with autocast(enabled=self.args.cuda):
+                with autocast(device_type=self.args.device, enabled=self.args.cuda):
                     next_value = self.agent.get_value(self.rollouts.obs[-1])
             
             self.rollouts.compute_returns(next_value, self.args.training.gamma, self.args.training.gae_lambda)

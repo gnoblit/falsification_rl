@@ -1,5 +1,5 @@
 import torch
-from torch.cuda.amp import autocast
+from torch.amp import autocast
 import torch.nn as nn
 import torch.optim as optim
 from torch.distributions.categorical import Categorical
