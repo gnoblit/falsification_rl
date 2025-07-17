@@ -17,8 +17,8 @@ class PPOAgent:
         self.feature_extractor = MiniGridCNN(obs_shape).to(self.device)
         self.policy_value_net = PolicyValueNet(self.feature_extractor.feature_size, action_space).to(self.device)
         
-        # Optimizers are now created in the child classes
-        self.policy_optimizer = None
+        # Initialize the policy optimizer. The aux_optimizer is not needed for the base PPO agent.
+        self.policy_optimizer = optim.Adam(self.policy_parameters(), lr=self.args.training.lr, eps=self.args.training.adam_eps)
         self.aux_optimizer = None
 
     def to(self, device):
@@ -80,7 +80,7 @@ class PPOAgent:
                 mb_inds = b_inds[start:end]
                 
                 # Use autocast for the forward and loss computation passes
-                with autocast(enabled=self.args.cuda):
+                with autocast(device_type=self.args.device, enabled=self.args.cuda):
                     # --- PPO Policy and Value Update ---
                     _, newlogprob, entropy, newvalue = self.get_action_and_value(
                         b_obs[mb_inds], b_actions.long()[mb_inds].squeeze(-1)
@@ -109,7 +109,7 @@ class PPOAgent:
 
                 # --- Auxiliary Model Update ---
                 if self.aux_optimizer:
-                    with autocast(enabled=self.args.cuda):
+                    with autocast(device_type=self.args.device, enabled=self.args.cuda):
                         aux_loss, aux_metrics = self.compute_auxiliary_loss(b_obs[mb_inds], rollouts, mb_inds)
                     
                     if aux_metrics:
